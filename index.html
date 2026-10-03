@@ -23,8 +23,8 @@ svg.ic{width:22px;height:22px;fill:none;stroke:currentColor;stroke-width:2;strok
 .slash{display:none}
 .off .slash{display:inline}
 
-/* ---------- màn hình vào phòng ---------- */
-#join{min-height:100%;display:grid;place-items:center;padding:24px}
+/* ---------- màn hình đăng nhập / vào phòng ---------- */
+#login,#join{min-height:100%;display:grid;place-items:center;padding:24px}
 .box{width:min(440px,100%)}
 .duo{width:132px;height:auto;display:block;margin:0 0 22px}
 .duo circle{fill:none;stroke:var(--acc);stroke-width:3}
@@ -35,14 +35,18 @@ h1{font-size:clamp(2rem,7vw,2.6rem);line-height:1.08;font-weight:800;margin:0 0 
 input{flex:1;min-width:0;padding:16px 18px;border:2px solid var(--line);border-radius:14px;background:var(--field);color:var(--ink);font-size:1.5rem;font-weight:600;letter-spacing:.16em;text-transform:lowercase}
 input::placeholder{letter-spacing:.02em;font-weight:400;font-size:1.05rem;color:var(--mute)}
 input:focus{outline:3px solid var(--acc);outline-offset:2px;border-color:var(--acc)}
+input.plain{font-size:1rem;letter-spacing:0;text-transform:none;font-weight:500;width:100%;margin-top:10px;flex:none}
 .btn{border:2px solid var(--line);border-radius:14px;padding:0 20px;min-height:58px;font-weight:600;cursor:pointer;background:transparent;color:var(--ink);transition:transform .12s,background .15s}
 .btn:active{transform:scale(.97)}
+.btn:disabled{opacity:.6;cursor:wait}
 .btn:focus-visible,.ctl:focus-visible{outline:3px solid var(--amber);outline-offset:2px}
 .btn.main{background:var(--acc);border-color:var(--acc);color:var(--acc-ink);width:100%;margin-top:12px;font-size:1.05rem;font-weight:800}
 .feat{display:flex;flex-wrap:wrap;gap:8px 18px;margin:26px 0 0;padding:0;list-style:none;color:var(--mute);font-size:.9rem}
 .feat li{display:flex;align-items:center;gap:8px}
 .feat li::before{content:"";width:8px;height:8px;border-radius:50%;background:var(--amber)}
-#err{color:var(--bad);min-height:1.4em;margin-top:14px;font-size:.92rem;font-weight:500}
+#err,#lgErr{color:var(--bad);min-height:1.4em;margin-top:14px;font-size:.92rem;font-weight:500}
+.who{display:flex;align-items:center;justify-content:space-between;gap:12px;margin:0 0 18px;color:var(--mute);font-size:.92rem}
+.who button{border:0;background:none;color:var(--acc);font-weight:600;cursor:pointer;text-decoration:underline}
 
 /* ---------- màn hình cuộc gọi ---------- */
 #call{display:none;height:100%;position:relative;background:var(--stage);color:#fff;overflow:hidden}
@@ -113,8 +117,23 @@ input:focus{outline:3px solid var(--acc);outline-offset:2px;border-color:var(--a
   </defs>
 </svg>
 
-<div id="join">
+<!-- Đăng nhập tài khoản -->
+<div id="login" hidden>
   <div class="box">
+    <svg class="duo" viewBox="0 0 120 64" aria-hidden="true"><circle cx="40" cy="32" r="26"/><circle cx="80" cy="32" r="26"/><path d="M60 15.39A26 26 0 0 1 60 48.61A26 26 0 0 1 60 15.39Z"/></svg>
+    <h1>Đăng nhập</h1>
+    <p class="sub">Dùng tài khoản Sổ tay Y Dược để vào phòng gọi video.</p>
+    <input class="plain" id="lgUser" placeholder="Tên đăng nhập" autocomplete="username" autocapitalize="off" spellcheck="false" aria-label="Tên đăng nhập">
+    <input class="plain" id="lgPass" type="password" placeholder="Mật khẩu" autocomplete="current-password" aria-label="Mật khẩu">
+    <button class="btn main" id="lgGo" type="button">Đăng nhập</button>
+    <div id="lgErr" role="alert"></div>
+  </div>
+</div>
+
+<!-- Vào phòng (chỉ hiện sau khi đăng nhập) -->
+<div id="join" style="display:none">
+  <div class="box">
+    <div class="who"><span>Xin chào, <b id="whoName"></b></span><button type="button" id="lgOut">Đăng xuất</button></div>
     <svg class="duo" viewBox="0 0 120 64" aria-hidden="true"><circle cx="40" cy="32" r="26"/><circle cx="80" cy="32" r="26"/><path d="M60 15.39A26 26 0 0 1 60 48.61A26 26 0 0 1 60 15.39Z"/></svg>
     <h1>Gọi video theo mã phòng</h1>
     <p class="sub">Hai người nhập cùng một mã phòng là vào được cuộc gọi. Mỗi khung hình chỉ nằm trên máy chủ cho đến khi khung tiếp theo thay vào, rời phòng là xóa sạch.</p>
@@ -168,6 +187,7 @@ input:focus{outline:3px solid var(--acc);outline-offset:2px;border-color:var(--a
 
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/bcryptjs/2.4.3/bcrypt.min.js"></script>
 <script>
 /* ===== 1) CẤU HÌNH FIREBASE ===== */
 const FIREBASE_CONFIG = {
@@ -198,6 +218,68 @@ const MIME = (() => { // WebP nhẹ hơn JPEG ~25–30%; Safari không có thì 
 })();
 
 const $ = id => document.getElementById(id);
+
+/* ===== ĐĂNG NHẬP BẰNG nguoidung.json =====
+   Đặt file nguoidung.json cùng thư mục với file này, định dạng:
+   { "users": [ { "username": "an", "ho_ten": "Nguyễn An", "password_hash": "$2y$10$..." } ] }
+   Lưu ý: đây chỉ là "cổng" giao diện, không phải bảo mật thật (xem lưu ý trong phần trả lời). */
+const USERS_URL = 'nguoidung.json', SESS_KEY = 'goivideo_account';
+let account = null;
+
+async function loadUsers() {
+  const r = await fetch(USERS_URL + '?t=' + Date.now(), { cache: 'no-store' });
+  if (!r.ok) throw new Error('HTTP ' + r.status);
+  const j = await r.json();
+  if (!j || !Array.isArray(j.users)) throw new Error('nguoidung.json sai định dạng');
+  return j.users;
+}
+function showApp(acc) {
+  account = acc;
+  $('login').hidden = !!acc;
+  $('join').style.display = acc ? 'grid' : 'none';
+  if (acc) $('whoName').textContent = acc.ho_ten || acc.username;
+  else $('lgPass').value = '';
+}
+async function login() {
+  const u = $('lgUser').value.trim(), p = $('lgPass').value, err = $('lgErr'), btn = $('lgGo');
+  err.textContent = '';
+  if (!u || !p) { err.textContent = 'Vui lòng nhập đầy đủ tên đăng nhập và mật khẩu.'; return; }
+  const BC = (window.dcodeIO && dcodeIO.bcrypt) || window.bcrypt;
+  if (!BC) { err.textContent = 'Chưa tải được thư viện mã hóa, hãy tải lại trang.'; return; }
+  btn.disabled = true; btn.textContent = 'Đang kiểm tra...';
+  try {
+    const x = (await loadUsers()).find(a => a.username === u);
+    const hash = String((x && x.password_hash) || '').replace(/^\$2y\$/, '$2a$'); // PHP dùng $2y$
+    const ok = !!(x && hash && await BC.compare(p, hash));
+    if (!ok) { err.textContent = 'Tên đăng nhập hoặc mật khẩu không đúng.'; return; }
+    const acc = { username: x.username, ho_ten: x.ho_ten || '' };
+    try { localStorage.setItem(SESS_KEY, JSON.stringify(acc)); } catch (e) {}
+    showApp(acc);
+  } catch (e) {
+    err.textContent = 'Không thể kiểm tra tài khoản lúc này (' + e.message + ').';
+  } finally { btn.disabled = false; btn.textContent = 'Đăng nhập'; }
+}
+async function logout() {
+  if (joined) await leave();
+  try { localStorage.removeItem(SESS_KEY); } catch (e) {}
+  showApp(null);
+}
+$('lgGo').onclick = login;
+$('lgPass').addEventListener('keydown', e => { if (e.key === 'Enter') login(); });
+$('lgUser').addEventListener('keydown', e => { if (e.key === 'Enter') $('lgPass').focus(); });
+$('lgOut').onclick = logout;
+
+(async function boot() {   // nhớ đăng nhập; tài khoản bị xóa khỏi json thì tự đăng xuất
+  let saved = null;
+  try { saved = JSON.parse(localStorage.getItem(SESS_KEY) || 'null'); } catch (e) {}
+  if (!saved) return showApp(null);
+  try {
+    const x = (await loadUsers()).find(a => a.username === saved.username);
+    if (!x) { try { localStorage.removeItem(SESS_KEY); } catch (e) {} return showApp(null); }
+    showApp({ username: x.username, ho_ten: x.ho_ten || '' });
+  } catch (e) { showApp(saved); }   // mất mạng thì dùng bản đã lưu
+})();
+
 let db, room, me, stream, screenStream, ctx, proc, clock, statTimer;
 let joined = false, joining = false, peers = 1, peerId = null, attachTok = 0;
 let micOn = true, camOn = true, modeIdx = 0, nextT = 0;
@@ -427,6 +509,7 @@ function announceCamOff() { // báo cho người kia biết mình tắt camera
 }
 
 async function join() {
+  if (!account) { showApp(null); return; }   // chưa đăng nhập thì không cho vào phòng
   if (joined || joining) return;
   $('err').textContent = '';
   const code = $('room').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
@@ -557,7 +640,8 @@ async function leave() {
   $('call').classList.remove('sharing', 'remote-off', 'alone');
   $('share').classList.remove('live');
   $('call').style.display = 'none';
-  $('join').style.display = 'grid';
+  $('join').style.display = account ? 'grid' : 'none';
+  $('login').hidden = !!account;
   micOn = camOn = true;
   setBtn('mic', true, 'Tắt micro', 'Bật micro'); setBtn('cam', true, 'Tắt camera', 'Bật camera');
 }
