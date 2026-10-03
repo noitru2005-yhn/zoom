@@ -1,0 +1,269 @@
+<!DOCTYPE html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Gọi video theo mã phòng</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600;800&display=swap">
+<style>
+:root{--bg:#e8edef;--ink:#17252a;--mute:#5b6b72;--line:#c5d0d5;--acc:#1f7a8c;--bad:#c93c4f;--stage:#0e1a1f}
+*{box-sizing:border-box}
+html,body{height:100%;margin:0}
+body{font-family:"Be Vietnam Pro",system-ui,sans-serif;background:var(--bg);color:var(--ink)}
+button,input{font:inherit}
+#join{min-height:100%;display:grid;place-items:center;padding:24px}
+.box{width:min(420px,100%)}
+h1{font-size:2rem;font-weight:800;margin:0 0 6px;letter-spacing:-.02em}
+.sub{color:var(--mute);margin:0 0 24px;line-height:1.5}
+.row{display:flex;gap:8px}
+input{flex:1;min-width:0;padding:14px;border:2px solid var(--line);border-radius:10px;background:#fff;font-size:1.25rem;letter-spacing:.12em;text-transform:lowercase}
+input:focus{outline:3px solid var(--acc);outline-offset:1px;border-color:var(--acc)}
+.btn{border:0;border-radius:10px;padding:14px 18px;font-weight:600;cursor:pointer;background:#fff;color:var(--ink);border:2px solid var(--line)}
+.btn.main{background:var(--acc);border-color:var(--acc);color:#fff;width:100%;margin-top:12px}
+.btn:focus-visible{outline:3px solid var(--acc);outline-offset:2px}
+#err{color:var(--bad);min-height:1.4em;margin-top:12px;font-size:.92rem}
+#call{display:none;height:100%;position:relative;background:var(--stage);color:#fff;overflow:hidden}
+#remote{position:absolute;inset:0;width:100%;height:100%;object-fit:contain;background:var(--stage)}
+#wait{position:absolute;inset:0;display:grid;place-items:center;text-align:center;padding:24px;color:#9fb4bc;line-height:1.6}
+#wait b{display:block;font-size:1.6rem;color:#fff;letter-spacing:.14em;margin-top:6px}
+#local{position:absolute;right:14px;top:calc(14px + env(safe-area-inset-top,0px));width:28vw;max-width:180px;min-width:110px;aspect-ratio:4/3;object-fit:cover;border-radius:10px;border:2px solid #fff3;transform:scaleX(-1);background:#000}
+#bar{position:absolute;left:0;right:0;bottom:0;display:flex;justify-content:center;align-items:center;gap:10px;padding:14px 14px calc(14px + env(safe-area-inset-bottom,0px));background:linear-gradient(transparent,#000a)}
+#bar .btn{background:#ffffff1f;border-color:transparent;color:#fff}
+#bar .btn.off{background:#fff;color:var(--ink)}
+#bar .btn.leave{background:var(--bad)}
+#stat{position:absolute;left:14px;top:calc(14px + env(safe-area-inset-top,0px));font-size:.8rem;color:#cfe0e5;background:#0008;padding:6px 10px;border-radius:8px}
+canvas{display:none}
+@media (prefers-color-scheme:dark){:root{--bg:#10191d;--ink:#e6eef0;--mute:#8da2a9;--line:#2c3d44}input{background:#16242a;color:var(--ink)}.btn{background:#16242a;color:var(--ink)}}
+</style>
+</head>
+<body>
+
+<div id="join">
+  <div class="box">
+    <h1>Gọi video theo mã phòng</h1>
+    <p class="sub">Hai người nhập cùng một mã phòng là vào được cuộc gọi. Hình ảnh gửi theo từng khung, tự xóa sau khi hiện 5 giây.</p>
+    <div class="row">
+      <input id="room" placeholder="mã phòng" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false" aria-label="Mã phòng">
+      <button class="btn" id="gen" type="button">Tạo mã</button>
+    </div>
+    <button class="btn main" id="go" type="button">Vào phòng</button>
+    <div id="err" role="alert"></div>
+  </div>
+</div>
+
+<div id="call">
+  <img id="remote" alt="Hình của người kia">
+  <div id="wait"><div>Đang chờ người kia vào phòng<b id="code"></b></div></div>
+  <video id="local" autoplay playsinline muted></video>
+  <div id="stat"></div>
+  <div id="bar">
+    <button class="btn" id="mic" type="button">Tắt micro</button>
+    <button class="btn" id="cam" type="button">Tắt camera</button>
+    <button class="btn leave" id="leave" type="button">Rời phòng</button>
+  </div>
+</div>
+<canvas id="cv"></canvas>
+
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.12.2/firebase-database-compat.js"></script>
+<script>
+/* ===== 1) DÁN CẤU HÌNH FIREBASE CỦA BẠN VÀO ĐÂY ===== */
+const FIREBASE_CONFIG = {
+  apiKey: "AIzaSyAthlT1cRxlTU4lMK2m7X1t7owo-JLEE0c",
+  authDomain: "goivideo-demo.firebaseapp.com",
+  databaseURL: "https://goivideo-demo-default-rtdb.asia-southeast1.firebasedatabase.app",
+  projectId: "goivideo-demo",
+  appId: "goivideo-demo.firebasestorage.app"
+};
+
+/* ===== 2) THÔNG SỐ ===== */
+const FPS = 4;              // số khung hình/giây gửi đi
+const W = 240, H = 180;     // kích thước mỗi khung
+const QUALITY = 0.5;        // chất lượng JPEG 0..1
+const AUDIO_RATE = 8000;    // tần số tiếng khi gửi (Hz)
+const AUDIO_CHUNK = 0.3;    // mỗi gói tiếng dài bao nhiêu giây
+const SHOW_MS = 5000;       // hiện được bao lâu thì xóa khỏi database
+const FALLBACK_MS = 10000;  // người gửi tự xóa dự phòng nếu bên nhận không xóa
+
+const $ = id => document.getElementById(id);
+let db, room, me, stream, ctx, proc, timer, statTimer, nextT = 0;
+let micOn = true, camOn = true, peers = 1, lastFrame = 0, sentBytes = 0, joined = false;
+const offs = [];
+
+$('gen').onclick = () => {
+  const c = 'abcdefghjkmnpqrstuvwxyz23456789';
+  let s = ''; for (let i = 0; i < 6; i++) s += c[Math.floor(Math.random() * c.length)];
+  $('room').value = s;
+};
+$('room').addEventListener('keydown', e => { if (e.key === 'Enter') join(); });
+$('go').onclick = join;
+$('leave').onclick = leave;
+$('mic').onclick = () => { micOn = !micOn; stream.getAudioTracks().forEach(t => t.enabled = micOn); setBtn('mic', micOn, 'Tắt micro', 'Bật micro'); };
+$('cam').onclick = () => { camOn = !camOn; stream.getVideoTracks().forEach(t => t.enabled = camOn); setBtn('cam', camOn, 'Tắt camera', 'Bật camera'); };
+function setBtn(id, on, a, b) { $(id).textContent = on ? a : b; $(id).classList.toggle('off', !on); }
+
+function fail(msg) { $('err').textContent = msg; cleanupMedia(); }
+
+async function join() {
+  if (joined) return;
+  $('err').textContent = '';
+  const code = $('room').value.trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+  if (code.length < 4) return fail('Mã phòng cần ít nhất 4 ký tự (chữ hoặc số).');
+  if (FIREBASE_CONFIG.apiKey.startsWith('DAN_')) return fail('Chưa dán cấu hình Firebase vào đầu file index.html.');
+
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({
+      video: { width: 320, height: 240, facingMode: 'user' },
+      audio: { echoCancellation: true, noiseSuppression: true }
+    });
+  } catch (e) { return fail('Không mở được camera/micro: ' + e.message); }
+
+  try {
+    if (!firebase.apps.length) firebase.initializeApp(FIREBASE_CONFIG);
+    db = firebase.database();
+    room = db.ref('rooms/' + code);
+    const mem = await room.child('members').once('value');
+    if (mem.numChildren() >= 2) return fail('Phòng này đã đủ 2 người.');
+
+    me = Math.random().toString(36).slice(2, 10);
+    const meRef = room.child('members/' + me);
+    await meRef.set(true);
+    meRef.onDisconnect().remove();
+
+    ctx = new (window.AudioContext || window.webkitAudioContext)(); // tạo trong lúc bấm nút để được phép phát tiếng
+    ctx.resume();
+
+    room.child('members').on('value', s => {
+      peers = s.numChildren();
+      $('wait').style.display = peers >= 2 ? 'none' : 'grid';
+      if (peers < 2) { $('remote').removeAttribute('src'); }
+    });
+    offs.push(() => room.child('members').off());
+
+    await listen('frames', v => {
+      $('remote').src = 'data:image/jpeg;base64,' + v.d;
+      lastFrame = Date.now();
+    });
+    await listen('audio', v => playChunk(v.d));
+
+    $('local').srcObject = stream;
+    $('code').textContent = code;
+    $('join').style.display = 'none';
+    $('call').style.display = 'block';
+    joined = true;
+    startSending();
+    statTimer = setInterval(() => {
+      const stale = Date.now() - lastFrame > 3000;
+      $('stat').textContent = 'Phòng ' + code + ' · gửi ' + Math.round(sentBytes / 1024 / 3) + ' KB/s' + (peers >= 2 && stale ? ' · chưa nhận được hình' : '');
+      sentBytes = 0;
+    }, 3000);
+  } catch (e) { fail('Lỗi kết nối: ' + e.message); }
+}
+
+/* Nhận dữ liệu mới của người kia; hiện xong thì 5 giây sau xóa khỏi database */
+async function listen(path, handler) {
+  const ref = room.child(path), seen = new Set();
+  (await ref.once('value')).forEach(c => { seen.add(c.key); });   // bỏ qua dữ liệu cũ còn sót
+  ref.on('child_added', s => {
+    if (seen.has(s.key)) return;
+    const v = s.val();
+    if (!v || v.from === me) return;
+    handler(v);
+    setTimeout(() => s.ref.remove(), SHOW_MS);
+  });
+  offs.push(() => ref.off());
+}
+
+/* Gửi hình + tiếng */
+function startSending() {
+  const vid = $('local'), cv = $('cv'), g = cv.getContext('2d');
+  cv.width = W; cv.height = H;
+  timer = setInterval(() => {
+    if (!camOn || peers < 2 || vid.readyState < 2) return;
+    g.drawImage(vid, 0, 0, W, H);
+    const d = cv.toDataURL('image/jpeg', QUALITY).split(',')[1];
+    const r = room.child('frames').push({ from: me, d });
+    sentBytes += d.length;
+    setTimeout(() => r.remove(), FALLBACK_MS);
+  }, 1000 / FPS);
+
+  const src = ctx.createMediaStreamSource(stream);
+  proc = ctx.createScriptProcessor(4096, 1, 1);
+  let pending = [], count = 0;
+  proc.onaudioprocess = e => {
+    if (!micOn || peers < 2) { pending = []; count = 0; return; }
+    const a = new Float32Array(e.inputBuffer.getChannelData(0));
+    pending.push(a); count += a.length;
+    if (count < ctx.sampleRate * AUDIO_CHUNK) return;
+    const all = new Float32Array(count); let o = 0;
+    for (const p of pending) { all.set(p, o); o += p.length; }
+    pending = []; count = 0;
+    const d = toB64(downsample(all, ctx.sampleRate, AUDIO_RATE));
+    const r = room.child('audio').push({ from: me, d });
+    sentBytes += d.length;
+    setTimeout(() => r.remove(), FALLBACK_MS);
+  };
+  src.connect(proc); proc.connect(ctx.destination);
+}
+
+function downsample(buf, inRate, outRate) {
+  const ratio = inRate / outRate, n = Math.floor(buf.length / ratio), out = new Int16Array(n);
+  for (let i = 0; i < n; i++) {
+    const s = Math.floor(i * ratio), e = Math.min(Math.floor((i + 1) * ratio), buf.length);
+    let sum = 0, c = 0; for (let j = s; j < e; j++) { sum += buf[j]; c++; }
+    const v = Math.max(-1, Math.min(1, c ? sum / c : 0));
+    out[i] = v < 0 ? v * 0x8000 : v * 0x7fff;
+  }
+  return out;
+}
+function toB64(i16) {
+  const u8 = new Uint8Array(i16.buffer); let s = '';
+  for (let i = 0; i < u8.length; i += 0x2000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x2000));
+  return btoa(s);
+}
+
+/* Phát tiếng nhận được, xếp nối tiếp nhau cho liền mạch */
+function playChunk(b64) {
+  const bin = atob(b64), n = bin.length >> 1;
+  const buf = ctx.createBuffer(1, n, AUDIO_RATE), ch = buf.getChannelData(0);
+  for (let i = 0; i < n; i++) {
+    let v = bin.charCodeAt(2 * i) | (bin.charCodeAt(2 * i + 1) << 8);
+    if (v >= 0x8000) v -= 0x10000;
+    ch[i] = v / 0x8000;
+  }
+  const now = ctx.currentTime;
+  if (nextT < now + 0.02) nextT = now + 0.2;   // đệm 0.2s chống giật
+  if (nextT > now + 1.5) return;               // trễ quá thì bỏ gói này
+  const s = ctx.createBufferSource(); s.buffer = buf; s.connect(ctx.destination);
+  s.start(nextT); nextT += buf.duration;
+}
+
+function cleanupMedia() {
+  clearInterval(timer); clearInterval(statTimer);
+  if (proc) { proc.disconnect(); proc.onaudioprocess = null; proc = null; }
+  if (ctx) { ctx.close().catch(() => {}); ctx = null; }
+  if (stream) { stream.getTracks().forEach(t => t.stop()); stream = null; }
+  offs.splice(0).forEach(f => f());
+}
+
+async function leave() {
+  const r = room, id = me;
+  cleanupMedia();
+  joined = false; nextT = 0; lastFrame = 0;
+  if (r && id) {
+    try {
+      await r.child('members/' + id).remove();
+      const left = await r.child('members').once('value');
+      if (!left.numChildren()) await r.remove();   // phòng trống thì xóa sạch
+    } catch (e) {}
+  }
+  $('call').style.display = 'none';
+  $('join').style.display = 'grid';
+  $('remote').removeAttribute('src');
+  setBtn('mic', true, 'Tắt micro', 'Bật micro'); setBtn('cam', true, 'Tắt camera', 'Bật camera');
+  micOn = camOn = true;
+}
+window.addEventListener('pagehide', () => { if (joined && room && me) room.child('members/' + me).remove(); });
+</script>
+</body>
+</html>
